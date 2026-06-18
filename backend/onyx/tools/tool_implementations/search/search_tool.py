@@ -93,6 +93,7 @@ from onyx.secondary_llm_flows.source_filter import decide_search_scope
 from onyx.server.query_and_chat.placement import Placement
 from onyx.server.query_and_chat.streaming_models import Packet
 from onyx.server.query_and_chat.streaming_models import SearchToolDocumentsDelta
+from onyx.server.query_and_chat.streaming_models import SearchToolFilterDelta
 from onyx.server.query_and_chat.streaming_models import SearchToolQueriesDelta
 from onyx.server.query_and_chat.streaming_models import SearchToolStart
 from onyx.tools.interface import Tool
@@ -129,9 +130,7 @@ logger = setup_logger()
 QUERIES_FIELD = "queries"
 
 
-def _build_scope_note(
-    scope: list[DocumentSource] | None, queries_run: list[str]
-) -> str:
+def _build_scope_note(scope: list[DocumentSource] | None, queries_run: list[str]) -> str:
     """Note appended to a scoped search's response: which source(s) it covered
     and the queries that ran, so a repeat can vary terms. "" when unscoped."""
     if not scope:
@@ -757,9 +756,7 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
 
         # This call's scope: the filter flow's pick, else the persona/user
         # restriction (the outer bound), else everything.
-        resolved_scope = (
-            plan_scope if plan_scope is not None else user_source_restriction
-        )
+        resolved_scope = plan_scope if plan_scope is not None else user_source_restriction
 
         logger.info(
             "Internal search - source scope: %s",
@@ -772,6 +769,18 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
             for source in resolved_scope:
                 if source not in self._searched_scopes:
                     self._searched_scopes.append(source)
+
+        # Surface the applied connector filter to the UI (only when scoped — an
+        # unscoped search needs no filter chip).
+        if resolved_scope:
+            self.emitter.emit(
+                Packet(
+                    placement=placement,
+                    obj=SearchToolFilterDelta(
+                        sources=[source.value for source in resolved_scope]
+                    ),
+                )
+            )
 
         # A note appended to the response so the agent knows this search was
         # scoped, and which queries actually ran (so a repeat can vary terms).
